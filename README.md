@@ -12,31 +12,63 @@ Entropy bounded at 0.20 nats throughout. Every state sealed with SHA-256.
 
 ## How it routes
 
+There are two independent routing paths. They run in parallel and agree on the op.
+
+### Path 1 — WebLLM XML bridge
+
 ```
 "copy buffer to destination"
          │
-         ▼  IRR: keyword scoring + regex pattern library
-         │  op=MEMCPY  confidence=0.73  weight=1.0  matched=True
+         ▼  InferenceScheduler: deduct 0.05 from entropy budget (cap 0.20)
          │
-         ▼  WebLLM bridge: NL → XML → AST
-         │  <route><leaf op="MEMCPY" weight="0.05" valid="true"/></route>
+         ▼  LLM.generate(query) → raw XML string
+         │  <route>
+         │    <leaf op="MEMCPY" weight="0.05" valid="true"/>
+         │  </route>
+         │
+         ▼  validate_xxe_output()  ← guard on LLM output before it hits the parser
+         │  rejects: DOCTYPE, ENTITY declarations, &entity; refs, SYSTEM identifiers
+         │  clean XML passes through unchanged
+         │
+         ▼  safe_stream_extract()  ← isolate the <route>...</route> block
          │
          ▼  Transform engine: 9 rewrite rules to fixpoint
-         │  (no rules fire on a single leaf — identity pass)
+         │  (single leaf — no rules fire, identity pass)
          │
-         ▼  Entropy engine: sparse complex trie, 90° phase rotation
+         ▼  parse_routing_ast()  ← recursive XML boolean evaluator
+            op=MEMCPY  valid=True  weight=0.05  ast_depth=1
+```
+
+### Path 2 — IRR direct routing
+
+```
+"copy buffer to destination"
+         │
+         ▼  IntentGenerator: keyword scoring → (op, pattern, confidence)
+         │  op=MEMCPY  confidence=0.73  pattern=(?i)\b(copy|clone|dup|transfer|memcpy)\b
+         │
+         ▼  MatchingEngine: regex match against top-N pattern library
+            op=MEMCPY  matched=True  weight=1.0
+```
+
+### Path 3 — Entropy pipeline (downstream of both)
+
+```
+op token (e.g. "MEMCPY")
+         │
+         ▼  SovereignEntropyEngine: sparse complex trie, 90° phase rotation per level
          │  "MEMCPY" → (0.3827+0.9239j)  |z|=1.0
          │
-         ▼  Constraint pass: validate complex state vector
+         ▼  ConstraintPass: NaN/Inf/zero check, quantise magnitude → force_op hint
          │  magnitude=1.0  valid=True  force_op=None
          │
-         ▼  Machine code selector: entropy.real → kernel index
+         ▼  MachineCodeSelector: entropy.real → sorted kernel index
          │  op=MEMCPY → 48 89 F9 48 89 F0 F3 A4 C3
          │
-         ▼  Sovereign VM: register machine execution
+         ▼  SovereignVM: register machine execution
          │  RAX=0 RCX=0  cycles=2
          │
-         ▼  Plasma gate: SHA-256 seal
+         ▼  PlasmaGate: SHA-256 seal of full state
             <proof><hash>7d2f1a...</hash></proof>
 ```
 
@@ -136,17 +168,26 @@ The `InferenceScheduler` cap is exercised by the routing layer and verified by t
 
 ## XXE hardening
 
-Every string entering the XML routing pipeline passes through `validate_xxe_output`:
+The LLM produces a raw XML string. That string is checked by `validate_xxe_output` **before** it reaches the AST parser. This guards against a compromised or adversarial model injecting XML entity expansion attacks through its output.
 
 ```
-'<!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'  →  BLOCKED
-'<route>&shell;</route>'                                     →  BLOCKED
-'SYSTEM "/etc/shadow"'                                       →  BLOCKED
-'<!ENTITY xxe "evil">'                                       →  BLOCKED
-'<route><leaf op="ADD" .../></route>'                        →  ALLOWED
+NL query → LLM.generate() → raw XML string
+                                    │
+                                    ▼  validate_xxe_output()
+                                    │
+                         BLOCKED ◄──┤── '<!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+                         BLOCKED ◄──┤── '<route>&shell;</route>'
+                         BLOCKED ◄──┤── 'SYSTEM "/etc/shadow"'
+                         BLOCKED ◄──┤── '<!ENTITY xxe "evil">'
+                                    │
+                                    ▼  passes through unchanged
+                         ALLOWED ───┘── '<route><leaf op="ADD" .../></route>'
+                                    │
+                                    ▼  safe_stream_extract() → parse_routing_ast()
 ```
 
-Blocks: `DOCTYPE`, `ENTITY` declarations, `&entity;` references, `SYSTEM` identifiers.
+Blocks: `DOCTYPE` declarations, `ENTITY` declarations, `&entity;` references, `SYSTEM` identifiers.
+The AST parser never sees untrusted entity-expanded content.
 
 ---
 
