@@ -1,8 +1,12 @@
-# Sovereign Shadow Compiler
+# Sovereign Shadow Compiler  `v1.0`
 
 A symbolic compiler that routes natural-language intent to verified x86-64 machine code through a deterministic pipeline — no LLM required, no probabilistic sampling, entropy-bounded throughout.
 
 Natural language in. Raw kernel bytes out. Every transform logged. Every state sealed with SHA-256.
+
+**Stack:** Python + NASM  
+**Tests:** 108 passing (`pytest tests/`)  
+**Known collision:** `"repeat 10 times"` → MUL (`times` matches MUL before LOOP — documented in `tests/test_irr.py`)
 
 ---
 
@@ -303,6 +307,9 @@ str query
 ## Running
 
 ```bash
+# Full test suite (108 tests)
+pytest tests/ -v
+
 # IRR: intent routing (9 queries + weight updates)
 python irr_demo.py
 
@@ -315,8 +322,8 @@ python demo.py
 # Plasma gate: seal + validate
 python plasma/demo.py
 
-# WebLLM transform tests (requires Node.js)
-node webllm/test_transform.mjs
+# WebLLM transform tests (Python, no Node.js needed)
+python -m webllm.test_transform
 
 # Full pipeline
 python pipeline.py
