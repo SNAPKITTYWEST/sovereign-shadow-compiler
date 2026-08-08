@@ -5,6 +5,8 @@ Run: python webllm/test_transform.py
 """
 
 import sys
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from webllm.transform import TransformEngine
 
 PASS = '\033[32m  PASS\033[0m'
